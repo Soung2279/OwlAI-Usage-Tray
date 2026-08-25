@@ -223,14 +223,31 @@ internal sealed class WidgetForm : Form
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        if (_acrylicApplied && !_previewMode) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var roundedBackground = GraphicsExtensions.CreateRoundedRectangle(
+            new RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
+            CornerRadius * UiScale);
+
+        if (_acrylicApplied && !_previewMode)
+        {
+            // AccentFlags stays at zero so DWM contributes only the rounded
+            // blur surface. Draw the tint ourselves inside the same geometry;
+            // otherwise Windows 10 creates an unclipped rectangular tint.
+            var tintAlpha = Math.Clamp(
+                (int)Math.Round(_acrylicOpacityPercent / 100D * 255D),
+                0,
+                255);
+            using var tint = new SolidBrush(Color.FromArgb(tintAlpha, 69, 80, 96));
+            e.Graphics.FillPath(tint, roundedBackground);
+            return;
+        }
 
         using var background = new LinearGradientBrush(
             ClientRectangle,
             Color.FromArgb(121, 132, 148),
             Color.FromArgb(67, 80, 98),
             LinearGradientMode.ForwardDiagonal);
-        e.Graphics.FillRectangle(background, ClientRectangle);
+        e.Graphics.FillPath(background, roundedBackground);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -613,7 +630,13 @@ internal sealed class WidgetForm : Form
 
         var nativeDiameter = (int)Math.Round(physicalRadius * 2);
         var nativeRegion = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, nativeDiameter, nativeDiameter);
-        if (nativeRegion != IntPtr.Zero && SetWindowRgn(Handle, nativeRegion, true) == 0)
+        if (nativeRegion == IntPtr.Zero) return;
+
+        AcrylicWindow.TrySetBlurRegion(
+            Handle,
+            nativeRegion,
+            _acrylicApplied && _blurStrength > 0);
+        if (SetWindowRgn(Handle, nativeRegion, true) == 0)
         {
             DeleteObject(nativeRegion);
         }

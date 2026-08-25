@@ -20,6 +20,8 @@ internal static class AcrylicWindow
     private const int AccentEnableTransparentGradient = 2;
     private const int AccentEnableBlurBehind = 3;
     private const int AccentEnableAcrylicBlurBehind = 4;
+    private const uint DwmBlurBehindEnable = 0x1;
+    private const uint DwmBlurBehindRegion = 0x2;
 
     private static readonly IntPtr User32Module;
     private static readonly SetWindowCompositionAttributeDelegate? SetAccentPolicy;
@@ -64,6 +66,20 @@ internal static class AcrylicWindow
         public int SizeOfData;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DwmBlurBehind
+    {
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool Enable;
+
+        public IntPtr BlurRegion;
+
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool TransitionOnMaximized;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int SetWindowCompositionAttributeDelegate(
         IntPtr window,
@@ -72,6 +88,11 @@ internal static class AcrylicWindow
     [DllImport("dwmapi.dll", PreserveSig = true)]
     private static extern int DwmIsCompositionEnabled(
         [MarshalAs(UnmanagedType.Bool)] out bool enabled);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmEnableBlurBehindWindow(
+        IntPtr window,
+        ref DwmBlurBehind blurBehind);
 
     public static bool TryEnable(IntPtr window, int opacityPercent, int blurStrength)
     {
@@ -131,6 +152,35 @@ internal static class AcrylicWindow
         };
     }
 
+    public static bool TrySetBlurRegion(IntPtr window, IntPtr region, bool enabled)
+    {
+        if (window == IntPtr.Zero ||
+            !OperatingSystem.IsWindowsVersionAtLeast(6) ||
+            !IsCompositionEnabled())
+        {
+            return false;
+        }
+
+        var blurBehind = new DwmBlurBehind
+        {
+            Flags = enabled
+                ? DwmBlurBehindEnable | DwmBlurBehindRegion
+                : DwmBlurBehindEnable,
+            Enable = enabled,
+            BlurRegion = enabled ? region : IntPtr.Zero,
+            TransitionOnMaximized = false
+        };
+
+        try
+        {
+            return DwmEnableBlurBehindWindow(window, ref blurBehind) == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool TryApply(IntPtr window, int accentState, int tint)
     {
         if (SetAccentPolicy is null) return false;
@@ -138,7 +188,7 @@ internal static class AcrylicWindow
         var accent = new AccentPolicy
         {
             AccentState = accentState,
-            AccentFlags = 2,
+            AccentFlags = 0,
             GradientColor = tint,
             AnimationId = 0
         };
