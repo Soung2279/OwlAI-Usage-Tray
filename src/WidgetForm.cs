@@ -11,6 +11,7 @@ internal sealed class WidgetForm : Form
     public const int MinimumWidgetWidth = 300;
     public const int MaximumWidgetWidth = 700;
     public const int DefaultWidgetHeight = 224;
+    public const int MinimalWidgetSize = 150;
     public const float MinimumWidgetScale = 0.75F;
     public const float MaximumWidgetScale = 1.50F;
     private const int ResizeBorderWidth = 7;
@@ -42,6 +43,7 @@ internal sealed class WidgetForm : Form
     private bool _statusIsError;
     private bool _previewMode;
     private bool _acrylicApplied;
+    private bool _minimalMode;
     private int _acrylicOpacityPercent = AppSettings.DefaultAcrylicOpacityPercent;
     private int _blurStrength = AppSettings.DefaultBlurStrength;
     private readonly System.Windows.Forms.Timer _animationTimer = new();
@@ -53,11 +55,14 @@ internal sealed class WidgetForm : Form
     private int _lastResizeHit = HitTestClient;
     private float _resizeLogicalWidth = DefaultWidgetWidth;
     private float _resizeAspectRatio = DefaultWidgetWidth / (float)DefaultWidgetHeight;
+    private Size _normalWidgetSize = new(DefaultWidgetWidth, DefaultWidgetHeight);
 
-    private float UiScale => Math.Clamp(
-        ClientSize.Height / (float)DefaultWidgetHeight,
-        MinimumWidgetScale,
-        MaximumWidgetScale);
+    private float UiScale => _minimalMode
+        ? ClientSize.Height / (float)DefaultWidgetHeight
+        : Math.Clamp(
+            ClientSize.Height / (float)DefaultWidgetHeight,
+            MinimumWidgetScale,
+            MaximumWidgetScale);
     private float LogicalWidth => ClientSize.Width / UiScale;
     private RectangleF WeeklyValueBounds => new(LogicalWidth - 142, 52, 130, 32);
     private RectangleF MonthlyValueBounds => new(LogicalWidth - 142, 126, 130, 32);
@@ -66,6 +71,7 @@ internal sealed class WidgetForm : Form
     private RectangleF RefreshBounds => new(LogicalWidth - 180, DefaultWidgetHeight - 30, 168, 28);
 
     public event EventHandler? RefreshRequested;
+    public bool MinimalMode => _minimalMode;
 
     public WidgetForm()
     {
@@ -112,6 +118,40 @@ internal sealed class WidgetForm : Form
         Invalidate();
     }
 
+    public void ApplyMinimalMode(bool enabled)
+    {
+        if (_minimalMode == enabled) return;
+
+        if (enabled)
+        {
+            _normalWidgetSize = ClientSize;
+        }
+        _minimalMode = enabled;
+        if (enabled)
+        {
+            ResetTextToggle(_weeklyValueState);
+            ResetTextToggle(_monthlyValueState);
+            ResetTextToggle(_weeklyResetState);
+            ResetTextToggle(_monthlyResetState);
+            Cursor = Cursors.Default;
+            MinimumSize = new Size(MinimalWidgetSize, MinimalWidgetSize);
+            MaximumSize = new Size(MinimalWidgetSize, MinimalWidgetSize);
+            ClientSize = new Size(MinimalWidgetSize, MinimalWidgetSize);
+        }
+        else
+        {
+            MaximumSize = new Size(
+                (int)Math.Round(MaximumWidgetWidth * MaximumWidgetScale),
+                (int)Math.Round(DefaultWidgetHeight * MaximumWidgetScale));
+            MinimumSize = new Size(
+                (int)Math.Round(MinimumWidgetWidth * MinimumWidgetScale),
+                (int)Math.Round(DefaultWidgetHeight * MinimumWidgetScale));
+            ClientSize = _normalWidgetSize;
+        }
+        UpdateAnimationTimer();
+        Invalidate();
+    }
+
     public void ApplySavedWidth(int width)
     {
         ApplySavedSize(width, ClientSize.Height);
@@ -127,9 +167,10 @@ internal sealed class WidgetForm : Form
             width / scale,
             MinimumWidgetWidth,
             MaximumWidgetWidth);
-        ClientSize = new Size(
+        _normalWidgetSize = new Size(
             (int)Math.Round(logicalWidth * scale),
             (int)Math.Round(DefaultWidgetHeight * scale));
+        if (!_minimalMode) ClientSize = _normalWidgetSize;
     }
 
     public void ApplyAcrylicSettings(int opacityPercent, int blurStrength)
@@ -224,7 +265,7 @@ internal sealed class WidgetForm : Form
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var roundedBackground = GraphicsExtensions.CreateRoundedRectangle(
+        using var backgroundShape = CreateWindowShapePath(
             new RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
             CornerRadius * UiScale);
 
@@ -238,7 +279,7 @@ internal sealed class WidgetForm : Form
                 0,
                 255);
             using var tint = new SolidBrush(Color.FromArgb(tintAlpha, 69, 80, 96));
-            e.Graphics.FillPath(tint, roundedBackground);
+            e.Graphics.FillPath(tint, backgroundShape);
             return;
         }
 
@@ -247,7 +288,7 @@ internal sealed class WidgetForm : Form
             Color.FromArgb(121, 132, 148),
             Color.FromArgb(67, 80, 98),
             LinearGradientMode.ForwardDiagonal);
-        e.Graphics.FillPath(background, roundedBackground);
+        e.Graphics.FillPath(background, backgroundShape);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -259,10 +300,19 @@ internal sealed class WidgetForm : Form
         graphics.ScaleTransform(UiScale, UiScale);
 
         using var borderPen = new Pen(Color.FromArgb(90, 225, 235, 245), 1.2F);
-        graphics.DrawRoundedRectangle(
-            borderPen,
-            new RectangleF(0.8F, 0.8F, LogicalWidth - 2.1F, DefaultWidgetHeight - 2.1F),
-            CornerRadius);
+        var borderBounds = new RectangleF(
+            0.8F,
+            0.8F,
+            LogicalWidth - 2.1F,
+            DefaultWidgetHeight - 2.1F);
+        if (_minimalMode) graphics.DrawEllipse(borderPen, borderBounds);
+        else graphics.DrawRoundedRectangle(borderPen, borderBounds, CornerRadius);
+
+        if (_minimalMode)
+        {
+            DrawMinimalMode(graphics);
+            return;
+        }
 
         DrawHeader(graphics);
 
@@ -346,6 +396,103 @@ internal sealed class WidgetForm : Form
             pillBounds.Top + 5.2F);
     }
 
+    private void DrawMinimalMode(Graphics graphics)
+    {
+        var centerX = LogicalWidth / 2;
+        const float centerY = DefaultWidgetHeight / 2;
+        DrawUsageRing(
+            graphics,
+            _response?.Progress.Weekly,
+            new RectangleF(centerX - 102, centerY - 102, 204, 204),
+            20F,
+            showResetReturn: false);
+        DrawUsageRing(
+            graphics,
+            _response?.Progress.Monthly,
+            new RectangleF(centerX - 75, centerY - 75, 150, 150),
+            10F,
+            showResetReturn: true);
+
+        var weeklyText = _response is null
+            ? "--%"
+            : FormatUsageValue(_response.Progress.Weekly, showAmount: false);
+        var monthlyText = _response is null
+            ? "--%"
+            : FormatUsageValue(_response.Progress.Monthly, showAmount: false);
+        DrawCenteredMinimalText(graphics, weeklyText, centerX, centerY - 18, 16F);
+        DrawCenteredMinimalText(graphics, monthlyText, centerX, centerY + 7, 11.5F);
+    }
+
+    private static void DrawUsageRing(
+        Graphics graphics,
+        UsagePeriod? usage,
+        RectangleF bounds,
+        float thickness,
+        bool showResetReturn)
+    {
+        using var trackPen = new Pen(Color.FromArgb(58, 229, 236, 244), thickness);
+        graphics.DrawEllipse(trackPen, bounds);
+        if (usage is null) return;
+
+        var hasResetReturn = showResetReturn && usage.ResetReturnAmountUsd > 0M;
+        var combinedLimit = usage.LimitUsd + (hasResetReturn ? usage.ResetReturnAmountUsd : 0M);
+        if (combinedLimit <= 0M) return;
+
+        var baseRatio = Math.Clamp(usage.UsedUsd / combinedLimit, 0M, 1M);
+        var resetRatio = hasResetReturn
+            ? Math.Clamp(usage.ResetReturnUsedUsd / combinedLimit, 0M, 1M - baseRatio)
+            : 0M;
+        DrawRingSegment(
+            graphics,
+            bounds,
+            thickness,
+            -90F,
+            (float)baseRatio * 360F,
+            Color.FromArgb(210, 240, 255, 255));
+        DrawRingSegment(
+            graphics,
+            bounds,
+            thickness,
+            -90F + (float)baseRatio * 360F,
+            (float)resetRatio * 360F,
+            Color.FromArgb(225, 163, 182, 193));
+    }
+
+    private static void DrawRingSegment(
+        Graphics graphics,
+        RectangleF bounds,
+        float thickness,
+        float startAngle,
+        float sweepAngle,
+        Color color)
+    {
+        if (sweepAngle <= 0.1F) return;
+        using var pen = new Pen(color, thickness)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+        if (sweepAngle >= 359.9F) graphics.DrawEllipse(pen, bounds);
+        else graphics.DrawArc(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height, startAngle, sweepAngle);
+    }
+
+    private static void DrawCenteredMinimalText(
+        Graphics graphics,
+        string text,
+        float centerX,
+        float centerY,
+        float fontSize)
+    {
+        using var font = new Font("Segoe UI", fontSize, FontStyle.Bold);
+        var size = graphics.MeasureString(text, font);
+        var x = centerX - size.Width / 2;
+        var y = centerY - size.Height / 2;
+        using var shadowBrush = new SolidBrush(Color.FromArgb(155, 17, 24, 39));
+        using var textBrush = new SolidBrush(Color.FromArgb(245, 248, 250, 252));
+        graphics.DrawString(text, font, shadowBrush, x + 1, y + 1);
+        graphics.DrawString(text, font, textBrush, x, y);
+    }
+
     private void DrawUsageSection(
         Graphics graphics,
         string label,
@@ -370,7 +517,6 @@ internal sealed class WidgetForm : Form
             graphics.DrawString("重置返额", legendFont, legendBrush, 34 + labelWidth, top + 3.5F);
         }
 
-        var percentage = Math.Clamp(usage.Percentage, 0M, 100M);
         var percentageText = FormatUsageValue(usage, valueState.Alternate);
         using var percentFont = new Font("Segoe UI", 10F);
         DrawAnimatedText(
@@ -384,9 +530,33 @@ internal sealed class WidgetForm : Form
             alignRight: true);
 
         var track = new RectangleF(20, top + 27, Math.Max(1, LogicalWidth - 40), 10);
-        using var trackBrush = new SolidBrush(Color.FromArgb(58, 229, 236, 244));
-        graphics.FillRoundedRectangle(trackBrush, track, 5);
+        DrawUsageBar(graphics, usage, track, showResetReturn);
 
+        using var resetFont = new Font("Microsoft YaHei UI", 8.5F);
+        var resetText = FormatResetValue(usage, resetState.Alternate);
+        DrawAnimatedText(
+            graphics,
+            resetState,
+            resetText,
+            resetFont,
+            Color.FromArgb(148, 213, 222, 234),
+            20,
+            top + 43,
+            alignRight: false);
+    }
+
+    private void DrawUsageBar(
+        Graphics graphics,
+        UsagePeriod usage,
+        RectangleF track,
+        bool showResetReturn)
+    {
+        var radius = track.Height / 2;
+        using var trackBrush = new SolidBrush(Color.FromArgb(58, 229, 236, 244));
+        graphics.FillRoundedRectangle(trackBrush, track, radius);
+
+        var hasResetReturn = showResetReturn && usage.ResetReturnAmountUsd > 0M;
+        var percentage = Math.Clamp(usage.Percentage, 0M, 100M);
         var combinedLimit = usage.LimitUsd + (hasResetReturn ? usage.ResetReturnAmountUsd : 0M);
         var baseFillRatio = combinedLimit > 0M
             ? Math.Clamp(usage.UsedUsd / combinedLimit, 0M, 1M)
@@ -397,19 +567,23 @@ internal sealed class WidgetForm : Form
         var fillWidth = track.Width * (float)baseFillRatio;
         if (fillWidth > 0.5F)
         {
-            var fillBounds = new RectangleF(track.Left, track.Top, Math.Max(6, fillWidth), track.Height);
+            var fillBounds = new RectangleF(
+                track.Left,
+                track.Top,
+                Math.Max(Math.Min(6F, track.Width), fillWidth),
+                track.Height);
             var color = percentage >= 90
                 ? Color.FromArgb(255, 82, 88)
                 : percentage >= 70
                     ? Color.FromArgb(245, 158, 11)
                     : Color.FromArgb(39, 205, 104);
             using var fillBrush = new SolidBrush(color);
-            graphics.FillRoundedRectangle(fillBrush, fillBounds, 5);
+            graphics.FillRoundedRectangle(fillBrush, fillBounds, radius);
 
             if (percentage >= 90)
             {
                 var state = graphics.Save();
-                using var clipPath = GraphicsExtensions.CreateRoundedRectangle(fillBounds, 5);
+                using var clipPath = GraphicsExtensions.CreateRoundedRectangle(fillBounds, radius);
                 graphics.SetClip(clipPath);
                 using var stripePen = new Pen(Color.FromArgb(100, 255, 235, 235), 5F);
                 for (var x = fillBounds.Left - 22 + _stripeOffset; x < fillBounds.Right + 22; x += 22)
@@ -435,25 +609,13 @@ internal sealed class WidgetForm : Form
                 Math.Min(Math.Max(4, resetFillWidth), availableWidth),
                 track.Height);
             using var resetFillBrush = new SolidBrush(Color.FromArgb(72, 187, 255));
-            graphics.FillRoundedRectangle(resetFillBrush, resetFillBounds, 5);
+            graphics.FillRoundedRectangle(resetFillBrush, resetFillBounds, radius);
         }
-
-        using var resetFont = new Font("Microsoft YaHei UI", 8.5F);
-        var resetText = FormatResetValue(usage, resetState.Alternate);
-        DrawAnimatedText(
-            graphics,
-            resetState,
-            resetText,
-            resetFont,
-            Color.FromArgb(148, 213, 222, 234),
-            20,
-            top + 43,
-            alignRight: false);
     }
 
     private void HandleMouseClick(object? sender, MouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left || _response is null) return;
+        if (e.Button != MouseButtons.Left || _response is null || _minimalMode) return;
         var point = ToLogical(e.Location);
 
         if (WeeklyValueBounds.Contains(point.X, point.Y))
@@ -486,16 +648,23 @@ internal sealed class WidgetForm : Form
         _response?.Progress.Monthly.Percentage >= 90M;
 
     private bool HasTextAnimation =>
-        _weeklyValueState.Animating ||
+        !_minimalMode && (_weeklyValueState.Animating ||
         _monthlyValueState.Animating ||
         _weeklyResetState.Animating ||
-        _monthlyResetState.Animating;
+        _monthlyResetState.Animating);
+
+    private static void ResetTextToggle(TextToggleState state)
+    {
+        state.Alternate = false;
+        state.Animating = false;
+    }
 
     private void UpdateAnimationTimer()
     {
         var textAnimation = HasTextAnimation;
+        var criticalAnimation = !_minimalMode && HasCriticalUsage;
         _animationTimer.Interval = 33;
-        _animationTimer.Enabled = Visible && (textAnimation || HasCriticalUsage);
+        _animationTimer.Enabled = Visible && (textAnimation || criticalAnimation);
     }
 
     private static void ToggleText(TextToggleState state, UsagePeriod usage, bool resetText)
@@ -589,11 +758,11 @@ internal sealed class WidgetForm : Form
     }
 
     private bool IsInteractivePoint(PointF point) =>
-        WeeklyValueBounds.Contains(point.X, point.Y) ||
+        !_minimalMode && (WeeklyValueBounds.Contains(point.X, point.Y) ||
         MonthlyValueBounds.Contains(point.X, point.Y) ||
         WeeklyResetBounds.Contains(point.X, point.Y) ||
         MonthlyResetBounds.Contains(point.X, point.Y) ||
-        RefreshBounds.Contains(point.X, point.Y);
+        RefreshBounds.Contains(point.X, point.Y));
 
     private PointF ToLogical(Point point) => new(point.X / UiScale, point.Y / UiScale);
 
@@ -619,7 +788,7 @@ internal sealed class WidgetForm : Form
     private void UpdateRoundedRegion()
     {
         var physicalRadius = CornerRadius * UiScale;
-        using (var path = GraphicsExtensions.CreateRoundedRectangle(
+        using (var path = CreateWindowShapePath(
                    new RectangleF(0, 0, Width, Height),
                    physicalRadius))
         {
@@ -629,7 +798,9 @@ internal sealed class WidgetForm : Form
         }
 
         var nativeDiameter = (int)Math.Round(physicalRadius * 2);
-        var nativeRegion = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, nativeDiameter, nativeDiameter);
+        var nativeRegion = _minimalMode
+            ? CreateEllipticRgn(0, 0, Width + 1, Height + 1)
+            : CreateRoundRectRgn(0, 0, Width + 1, Height + 1, nativeDiameter, nativeDiameter);
         if (nativeRegion == IntPtr.Zero) return;
 
         AcrylicWindow.TrySetBlurRegion(
@@ -642,6 +813,15 @@ internal sealed class WidgetForm : Form
         }
     }
 
+    private GraphicsPath CreateWindowShapePath(RectangleF bounds, float radius)
+    {
+        if (!_minimalMode) return GraphicsExtensions.CreateRoundedRectangle(bounds, radius);
+
+        var path = new GraphicsPath();
+        path.AddEllipse(bounds);
+        return path;
+    }
+
     private void DragWindow(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left || IsInteractivePoint(ToLogical(e.Location))) return;
@@ -651,6 +831,13 @@ internal sealed class WidgetForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        if (_minimalMode && message.Msg == WindowMessageSizing)
+        {
+            base.WndProc(ref message);
+            message.Result = (IntPtr)1;
+            return;
+        }
+
         if (message.Msg == WindowMessageEnterSizeMove)
         {
             _resizeLogicalWidth = LogicalWidth;
@@ -677,7 +864,8 @@ internal sealed class WidgetForm : Form
         base.WndProc(ref message);
         if (message.Msg != WindowMessageNcHitTest ||
             message.Result != (IntPtr)HitTestClient ||
-            WindowState != FormWindowState.Normal)
+            WindowState != FormWindowState.Normal ||
+            _minimalMode)
         {
             return;
         }
@@ -796,6 +984,9 @@ internal sealed class WidgetForm : Form
 
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateEllipticRgn(int left, int top, int right, int bottom);
 
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

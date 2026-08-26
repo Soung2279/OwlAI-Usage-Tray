@@ -12,6 +12,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly WidgetForm _widget = new();
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _alwaysOnTopItem;
+    private readonly ToolStripMenuItem _minimalModeItem;
     private readonly System.Windows.Forms.Timer _refreshTimer = new();
     private readonly System.Windows.Forms.Timer _startupTimer = new();
     private SettingsForm? _settingsForm;
@@ -35,8 +36,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (!_suppressAppearanceToggle) SetAlwaysOnTop(_alwaysOnTopItem.Checked);
         };
 
+        _minimalModeItem = new ToolStripMenuItem("极简模式")
+        {
+            Checked = _settings.MinimalMode,
+            CheckOnClick = true
+        };
+        _minimalModeItem.CheckedChanged += (_, _) =>
+        {
+            if (!_suppressAppearanceToggle) SetMinimalMode(_minimalModeItem.Checked);
+        };
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(_alwaysOnTopItem);
+        menu.Items.Add(_minimalModeItem);
         menu.Items.Add("设置", null, (_, _) => OpenSettings());
         menu.Items.Add("重新登录", null, async (_, _) => await ReloginAsync());
         menu.Items.Add("退出", null, (_, _) => ExitApplication());
@@ -55,6 +67,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
 
         _widget.ApplyAlwaysOnTop(_settings.AlwaysOnTop);
+        _widget.ApplyMinimalMode(_settings.MinimalMode);
         _widget.ApplySavedSize(_settings.WidgetWidth, _settings.WidgetHeight);
         _widget.ApplyAcrylicSettings(
             _settings.AcrylicOpacityPercent,
@@ -191,10 +204,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _settingsStore.Save(_settings);
     }
 
+    private void SetMinimalMode(bool enabled)
+    {
+        var center = new Point(
+            _widget.Left + _widget.Width / 2,
+            _widget.Top + _widget.Height / 2);
+        _settings.MinimalMode = enabled;
+        SyncAppearanceMenu();
+        _widget.ApplyMinimalMode(enabled);
+        var area = Screen.FromPoint(center).WorkingArea;
+        _widget.Location = new Point(
+            Math.Clamp(
+                center.X - _widget.Width / 2,
+                area.Left,
+                Math.Max(area.Left, area.Right - _widget.Width)),
+            Math.Clamp(
+                center.Y - _widget.Height / 2,
+                area.Top,
+                Math.Max(area.Top, area.Bottom - _widget.Height)));
+        _settings.WidgetX = _widget.Left;
+        _settings.WidgetY = _widget.Top;
+        _settingsStore.Save(_settings);
+    }
+
     private void SyncAppearanceMenu()
     {
         _suppressAppearanceToggle = true;
         _alwaysOnTopItem.Checked = _settings.AlwaysOnTop;
+        _minimalModeItem.Checked = _settings.MinimalMode;
         _suppressAppearanceToggle = false;
     }
 
@@ -296,14 +333,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!_widget.Visible) return;
         _settings.WidgetX = _widget.Left;
         _settings.WidgetY = _widget.Top;
-        _settings.WidgetWidth = Math.Clamp(
-            _widget.Width,
-            (int)Math.Round(WidgetForm.MinimumWidgetWidth * WidgetForm.MinimumWidgetScale),
-            (int)Math.Round(WidgetForm.MaximumWidgetWidth * WidgetForm.MaximumWidgetScale));
-        _settings.WidgetHeight = Math.Clamp(
-            _widget.Height,
-            (int)Math.Round(WidgetForm.DefaultWidgetHeight * WidgetForm.MinimumWidgetScale),
-            (int)Math.Round(WidgetForm.DefaultWidgetHeight * WidgetForm.MaximumWidgetScale));
+        if (!_widget.MinimalMode)
+        {
+            _settings.WidgetWidth = Math.Clamp(
+                _widget.Width,
+                (int)Math.Round(WidgetForm.MinimumWidgetWidth * WidgetForm.MinimumWidgetScale),
+                (int)Math.Round(WidgetForm.MaximumWidgetWidth * WidgetForm.MaximumWidgetScale));
+            _settings.WidgetHeight = Math.Clamp(
+                _widget.Height,
+                (int)Math.Round(WidgetForm.DefaultWidgetHeight * WidgetForm.MinimumWidgetScale),
+                (int)Math.Round(WidgetForm.DefaultWidgetHeight * WidgetForm.MaximumWidgetScale));
+        }
         _settingsStore.Save(_settings);
     }
 
@@ -354,18 +394,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 ? Color.FromArgb(245, 158, 11)
                 : Color.FromArgb(34, 197, 94);
         using var background = new SolidBrush(Color.FromArgb(30, 41, 59));
-        using var foreground = new SolidBrush(color);
-        graphics.FillEllipse(background, 1, 1, 30, 30);
+        graphics.FillEllipse(background, 0, 0, 32, 32);
 
         var sweep = (float)(Math.Clamp(percentage, 0, 100) / 100D * 360D);
-        using var pen = new Pen(color, 4F) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        if (sweep > 0) graphics.DrawArc(pen, 4, 4, 24, 24, -90, sweep);
-
-        var remaining = Math.Max(0, 100 - (int)Math.Round(percentage));
-        var text = remaining > 99 ? "99" : remaining.ToString();
-        using var font = new Font("Segoe UI", 7.2F, FontStyle.Bold, GraphicsUnit.Pixel);
-        var size = graphics.MeasureString(text, font);
-        graphics.DrawString(text, font, foreground, 16 - size.Width / 2, 16 - size.Height / 2);
+        using var pen = new Pen(color, 5F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+        if (sweep > 0) graphics.DrawArc(pen, 2.5F, 2.5F, 27F, 27F, -90, sweep);
 
         var handle = bitmap.GetHicon();
         try

@@ -115,6 +115,7 @@ internal sealed class AppSettings
 
     public bool WidgetVisible { get; set; } = true;
     public bool AlwaysOnTop { get; set; } = true;
+    public bool MinimalMode { get; set; }
     public int? WidgetX { get; set; }
     public int? WidgetY { get; set; }
     public int WidgetWidth { get; set; } = WidgetForm.DefaultWidgetWidth;

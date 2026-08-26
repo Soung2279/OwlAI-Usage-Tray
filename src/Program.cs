@@ -28,7 +28,11 @@ internal static class Program
                                 int.TryParse(args[previewIndex + 3], out var requestedHeight)
                 ? requestedHeight
                 : WidgetForm.DefaultWidgetHeight;
-            return RenderPreview(args[previewIndex + 1], previewWidth, previewHeight);
+            var minimalMode = previewIndex + 4 < args.Length &&
+                              args[previewIndex + 4].Equals(
+                                  "minimal",
+                                  StringComparison.OrdinalIgnoreCase);
+            return RenderPreview(args[previewIndex + 1], previewWidth, previewHeight, minimalMode);
         }
 
         var settingsPreviewIndex = Array.FindIndex(
@@ -62,7 +66,7 @@ internal static class Program
         }
     }
 
-    private static int RenderPreview(string outputPath, int width, int height)
+    private static int RenderPreview(string outputPath, int width, int height, bool minimalMode)
     {
         try
         {
@@ -94,6 +98,7 @@ internal static class Program
                 },
                 DateTimeOffset.Now);
             widget.ApplySavedSize(width, height);
+            widget.ApplyMinimalMode(minimalMode);
             widget.SetPreviewMode();
             widget.ApplyAlwaysOnTop(alwaysOnTop: true);
             widget.Show();
